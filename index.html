@@ -23,7 +23,8 @@
   input[type=file]{display:none}
   .video-container{position:relative;width:100%;margin:14px 0;border-radius:14px;overflow:hidden;background:#000}
   video,canvas{width:100%;height:auto;display:block}
-  #overlay,#trainOverlay{position:absolute;top:0;left:0;cursor:crosshair;touch-action:none}
+  #overlay,#trainOverlay{position:absolute;top:0;left:0;width:100%;height:100%;cursor:crosshair;touch-action:none}
+  #trainCanvas{display:block;width:100%;height:auto}
   .controls{display:flex;gap:8px;margin:12px 0;flex-wrap:wrap}
   button{flex:1;min-width:130px;padding:13px 16px;border:none;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;transition:.25s;text-transform:uppercase;letter-spacing:.5px}
   .btn-primary{background:linear-gradient(135deg,#00d4ff,#0099ff);color:#000}
@@ -433,7 +434,9 @@ let tDrag=null;
 $('trainUploadBox').onclick=()=>$('trainInput').click();
 $('trainInput').onchange=async e=>{
   const files=[...e.target.files]; if(!files.length)return;
-  trainQueue=[]; trainIdx=0;
+  // clear any previous frame/box so items don't stack
+  trainQueue=[]; trainIdx=0; curBox=null; tDrag=null;
+  toctx&&toctx.clearRect(0,0,tOverlay.width,tOverlay.height);
   for(const f of files){
     if(f.type.startsWith('image/')) trainQueue.push({type:'image',src:URL.createObjectURL(f)});
     else if(f.type.startsWith('video/')) trainQueue.push({type:'video',src:URL.createObjectURL(f)});
@@ -462,7 +465,9 @@ async function showTrainItem(){
 }
 function drawTrainFrame(srcEl,w,h){
   tCanvas.width=w; tCanvas.height=h; tOverlay.width=w; tOverlay.height=h;
-  tctx.drawImage(srcEl,0,0,w,h); toctx.clearRect(0,0,w,h);
+  tctx.clearRect(0,0,w,h); tctx.drawImage(srcEl,0,0,w,h);
+  toctx.clearRect(0,0,w,h);
+  curBox=null;
 }
 function tToCanvas(cx,cy){ const r=tOverlay.getBoundingClientRect(); return {x:(cx-r.left)/r.width*tOverlay.width, y:(cy-r.top)/r.height*tOverlay.height}; }
 function tStart(cx,cy){ tDrag=tToCanvas(cx,cy); curBox={x:tDrag.x,y:tDrag.y,w:0,h:0}; }
