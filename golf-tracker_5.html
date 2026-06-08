@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GolfTrack — Ball Tracker</title>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.11.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:-apple-system,'Segoe UI',Tahoma,sans-serif;background:linear-gradient(135deg,#0f0f0f,#1a1a1a);color:#fff;min-height:100vh;display:flex;align-items:flex-start;justify-content:center;padding:16px}
+  .container{width:100%;max-width:760px;background:rgba(20,20,20,.95);border-radius:20px;padding:22px;border:1px solid rgba(255,255,255,.1);box-shadow:0 8px 32px rgba(0,0,0,.5)}
+  h1{font-size:30px;font-weight:800;background:linear-gradient(135deg,#00d4ff,#0099ff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;letter-spacing:-1px}
+  .subtitle{color:#aaa;margin:6px 0 18px;font-size:13px}
+  .tabs{display:flex;gap:8px;margin-bottom:18px;background:rgba(255,255,255,.05);padding:5px;border-radius:12px}
+  .tab{flex:1;padding:11px;text-align:center;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;color:#aaa;transition:.2s;text-transform:uppercase;letter-spacing:.5px}
+  .tab.active{background:linear-gradient(135deg,#00d4ff,#0099ff);color:#000}
+  .panel{display:none}.panel.active{display:block}
+  .upload-box{border:2px dashed #00d4ff;border-radius:14px;padding:26px 16px;text-align:center;cursor:pointer;transition:.25s;background:rgba(0,212,255,.05);margin-bottom:12px}
+  .upload-box:hover{background:rgba(0,212,255,.12)}
+  .upload-text{font-size:15px;font-weight:700;margin-bottom:6px}
+  .upload-hint{color:#888;font-size:12px}
+  input[type=file]{display:none}
+  .video-container{position:relative;width:100%;margin:14px 0;border-radius:14px;overflow:hidden;background:#000}
+  video,canvas{width:100%;height:auto;display:block}
+  #overlay,#trainOverlay{position:absolute;top:0;left:0;cursor:crosshair;touch-action:none}
+  .controls{display:flex;gap:8px;margin:12px 0;flex-wrap:wrap}
+  button{flex:1;min-width:130px;padding:13px 16px;border:none;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;transition:.25s;text-transform:uppercase;letter-spacing:.5px}
+  .btn-primary{background:linear-gradient(135deg,#00d4ff,#0099ff);color:#000}
+  .btn-primary:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(0,212,255,.4)}
+  .btn-rec{background:linear-gradient(135deg,#ff2d55,#ff5e3a);color:#fff}
+  .btn-secondary{background:rgba(255,255,255,.1);color:#fff;border:1px solid rgba(255,255,255,.2)}
+  .btn-secondary:hover{background:rgba(255,255,255,.18)}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  .slider-row{margin:12px 0;background:rgba(255,255,255,.04);padding:14px;border-radius:10px}
+  .slider-row label{font-size:12px;color:#bbb;display:flex;justify-content:space-between;margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px}
+  input[type=range]{width:100%;accent-color:#00d4ff}
+  .stats-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-top:16px}
+  .stat-card{background:rgba(0,212,255,.1);border:1px solid rgba(0,212,255,.3);border-radius:12px;padding:14px;text-align:center}
+  .stat-label{color:#888;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:5px}
+  .stat-value{font-size:24px;font-weight:800;color:#00ffff}
+  .status{margin-top:12px;padding:13px;border-radius:10px;background:rgba(255,255,255,.05);border-left:4px solid #00d4ff;font-size:13px;line-height:1.5}
+  .status.success{border-left-color:#00ff66;color:#00ff66}
+  .status.error{border-left-color:#ff6b6b;color:#ff6b6b}
+  .status.warn{border-left-color:#ffcc00;color:#ffcc00}
+  .loading{display:inline-block;width:8px;height:8px;background:#00d4ff;border-radius:50%;animation:pulse 1s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+  .toggle-debug{font-size:12px;color:#00d4ff;background:none;border:none;text-transform:none;text-decoration:underline;cursor:pointer;padding:4px;margin-top:4px;flex:none;min-width:auto}
+  .train-info{background:rgba(0,212,255,.08);border:1px solid rgba(0,212,255,.2);border-radius:10px;padding:14px;font-size:13px;line-height:1.6;margin-bottom:14px;color:#cde}
+  .sample-count{display:inline-block;background:#00d4ff;color:#000;font-weight:800;border-radius:20px;padding:2px 12px;margin-left:6px}
+  .thumbs{display:grid;grid-template-columns:repeat(auto-fill,minmax(80px,1fr));gap:8px;margin-top:12px}
+  .thumb{position:relative;border-radius:8px;overflow:hidden;aspect-ratio:1;background:#000}
+  .thumb img{width:100%;height:100%;object-fit:cover}
+  .thumb .del{position:absolute;top:2px;right:2px;background:rgba(255,45,45,.9);border:none;border-radius:50%;width:20px;height:20px;color:#fff;font-size:12px;cursor:pointer;padding:0;min-width:auto;line-height:1}
+  .badge{font-size:11px;color:#888;margin-top:4px}
+  @media(max-width:600px){.container{padding:16px}h1{font-size:24px}.stats-grid{grid-template-columns:1fr}button{min-width:100%}}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>GolfTrack</h1>
+  <p class="subtitle">Hybrid AI ball tracking — detect, follow, learn</p>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="track">🎯 Track</div>
+    <div class="tab" data-tab="train">🧠 Train model</div>
+  </div>
+
+  <!-- ============ TRACK PANEL ============ -->
+  <div class="panel active" id="trackPanel">
+    <div class="upload-box" id="uploadBox">
+      <div class="upload-text">📹 Upload a golf shot video</div>
+      <div class="upload-hint">MP4 / MOV / WebM — or record below</div>
+      <input type="file" id="videoInput" accept="video/*">
+    </div>
+    <div class="controls"><button class="btn-rec" id="recordBtn">🔴 Record in app</button></div>
+
+    <div id="videoContainer" class="video-container" style="display:none">
+      <video id="video" playsinline muted></video>
+      <canvas id="overlay"></canvas>
+    </div>
+
+    <div class="slider-row" id="sensRow" style="display:none">
+      <label>Tracking sensitivity <span id="sensVal">medium</span></label>
+      <input type="range" id="sens" min="40" max="160" value="90">
+      <label style="margin-top:14px">Min brightness <span id="brightVal">380</span></label>
+      <input type="range" id="bright" min="200" max="600" value="380">
+    </div>
+
+    <div class="controls" id="controls" style="display:none">
+      <button class="btn-primary" id="analyzeBtn">🎯 Analyze shot</button>
+      <button class="btn-secondary" id="exportBtn" disabled>💾 Export video</button>
+      <button class="btn-secondary" id="resetBtn">↺ Reset</button>
+    </div>
+    <div style="text-align:center"><button class="toggle-debug" id="debugBtn">show live tracking</button></div>
+
+    <div id="status"></div>
+
+    <div id="stats" class="stats-grid" style="display:none">
+      <div class="stat-card"><div class="stat-label">Distance</div><div class="stat-value" id="distance">—</div></div>
+      <div class="stat-card"><div class="stat-label">Launch angle</div><div class="stat-value" id="angle">—</div></div>
+      <div class="stat-card"><div class="stat-label">Peak height</div><div class="stat-value" id="height">—</div></div>
+      <div class="stat-card"><div class="stat-label">Flight time</div><div class="stat-value" id="time">—</div></div>
+    </div>
+  </div>
+
+  <!-- ============ TRAIN PANEL ============ -->
+  <div class="panel" id="trainPanel">
+    <div class="train-info">
+      <b>Teach the app what YOUR golf ball looks like.</b><br>
+      1. Upload images or a video.<br>
+      2. <b>Drag a box around the ball</b> in each frame.<br>
+      3. Saved samples make tracking smarter, and can be exported to train a real YOLO model later.
+      <br><br>Saved samples: <span class="sample-count" id="sampleCount">0</span>
+    </div>
+
+    <div class="upload-box" id="trainUploadBox">
+      <div class="upload-text">🖼️ Add training images / video</div>
+      <div class="upload-hint">Select one or more images, or a video to grab frames from</div>
+      <input type="file" id="trainInput" accept="image/*,video/*" multiple>
+    </div>
+
+    <div id="trainContainer" class="video-container" style="display:none">
+      <canvas id="trainCanvas"></canvas>
+      <canvas id="trainOverlay"></canvas>
+    </div>
+
+    <div class="controls" id="trainControls" style="display:none">
+      <button class="btn-primary" id="saveSampleBtn">✓ Save this sample</button>
+      <button class="btn-secondary" id="nextFrameBtn">⏭ Next frame</button>
+      <button class="btn-secondary" id="skipBtn">Skip</button>
+    </div>
+
+    <div class="controls">
+      <button class="btn-secondary" id="exportDataBtn">📦 Export dataset (YOLO)</button>
+      <button class="btn-secondary" id="clearDataBtn">🗑 Clear samples</button>
+    </div>
+
+    <div id="trainStatus"></div>
+    <div class="thumbs" id="thumbs"></div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+
+/* ============ TABS ============ */
+document.querySelectorAll('.tab').forEach(t=>{
+  t.onclick=()=>{
+    document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach(x=>x.classList.remove('active'));
+    t.classList.add('active');
+    $(t.dataset.tab==='track'?'trackPanel':'trainPanel').classList.add('active');
+  };
+});
+
+/* ============ SHARED: load COCO-SSD model once ============ */
+let cocoModel=null, modelLoading=null;
+function loadModel(){
+  if(cocoModel) return Promise.resolve(cocoModel);
+  if(modelLoading) return modelLoading;
+  modelLoading = cocoSsd.load({base:'lite_mobilenet_v2'}).then(m=>{cocoModel=m;return m;});
+  return modelLoading;
+}
+
+/* ============ LEARNED BALL APPEARANCE (from training samples) ============ */
+// stored in localStorage: average colour + size of the ball the user has marked
+function getLearned(){
+  try{ return JSON.parse(localStorage.getItem('golf_ball_profile')||'null'); }catch(e){ return null; }
+}
+function getSamples(){
+  try{ return JSON.parse(localStorage.getItem('golf_samples')||'[]'); }catch(e){ return []; }
+}
+function setSamples(s){ localStorage.setItem('golf_samples',JSON.stringify(s)); updateLearned(s); }
+function updateLearned(samples){
+  if(!samples.length){ localStorage.removeItem('golf_ball_profile'); return; }
+  let r=0,g=0,b=0,sz=0;
+  samples.forEach(s=>{ r+=s.r; g+=s.g; b+=s.b; sz+=s.size; });
+  const n=samples.length;
+  localStorage.setItem('golf_ball_profile',JSON.stringify({r:r/n,g:g/n,b:b/n,size:sz/n,n}));
+}
+
+/* ===================================================================
+   ============ TRACK PANEL ============
+   =================================================================== */
+const video=$('video'), overlay=$('overlay'), octx=overlay.getContext('2d');
+let trajectoryPoints=[], prevFrame=null, debug=false, recordedBlob=null, ballSeed=null;
+const proc=document.createElement('canvas');
+const pctx=proc.getContext('2d',{willReadFrequently:true});
+
+/* tap/drag to mark ball + launch direction */
+overlay.style.pointerEvents='auto';
+let dragStart=null;
+function toVid(cx,cy){ const r=overlay.getBoundingClientRect(); return {x:(cx-r.left)/r.width*video.videoWidth, y:(cy-r.top)/r.height*video.videoHeight}; }
+function drawSeed(){
+  overlay.width=video.videoWidth; overlay.height=video.videoHeight;
+  octx.drawImage(video,0,0,overlay.width,overlay.height);
+  octx.strokeStyle='#00ff66'; octx.lineWidth=Math.max(3,overlay.width/200);
+  octx.beginPath(); octx.arc(ballSeed.x,ballSeed.y,Math.max(14,overlay.width/40),0,7); octx.stroke();
+  if(ballSeed.dirX!==undefined){ octx.beginPath(); octx.moveTo(ballSeed.x,ballSeed.y); octx.lineTo(ballSeed.x+ballSeed.dirX*120,ballSeed.y+ballSeed.dirY*120); octx.stroke(); }
+}
+function startMark(cx,cy){ if(!video.videoWidth)return; dragStart=toVid(cx,cy); ballSeed={x:dragStart.x,y:dragStart.y}; drawSeed(); }
+function moveMark(cx,cy){ if(!dragStart)return; const p=toVid(cx,cy),dx=p.x-dragStart.x,dy=p.y-dragStart.y,l=Math.hypot(dx,dy); if(l>15){ballSeed.dirX=dx/l;ballSeed.dirY=dy/l;drawSeed();} }
+function endMark(){ if(!dragStart)return; dragStart=null; setStatus(ballSeed.dirX!==undefined?'✓ Ball + direction set. Press “Analyze shot”.':'✓ Ball marked. Tip: drag in the flight direction for better tracking.','success'); }
+overlay.addEventListener('mousedown',e=>startMark(e.clientX,e.clientY));
+overlay.addEventListener('mousemove',e=>{if(dragStart)moveMark(e.clientX,e.clientY);});
+overlay.addEventListener('mouseup',endMark);
+overlay.addEventListener('touchstart',e=>{e.preventDefault();const t=e.touches[0];if(t)startMark(t.clientX,t.clientY);},{passive:false});
+overlay.addEventListener('touchmove',e=>{e.preventDefault();const t=e.touches[0];if(t)moveMark(t.clientX,t.clientY);},{passive:false});
+overlay.addEventListener('touchend',e=>{e.preventDefault();endMark();},{passive:false});
+
+$('uploadBox').onclick=()=>$('videoInput').click();
+$('videoInput').onchange=e=>{ if(e.target.files[0]) loadVideo(URL.createObjectURL(e.target.files[0])); };
+
+function loadVideo(src){
+  recordedBlob=null; video.srcObject=null; video.src=src; video.load();
+  $('videoContainer').style.display='block'; $('controls').style.display='flex';
+  $('sensRow').style.display='block'; $('exportBtn').disabled=true; $('stats').style.display='none';
+  trajectoryPoints=[]; ballSeed=null;
+  setStatus('👆 Drag a line from the ball in the direction it flies, then press “Analyze shot”.');
+  video.onloadeddata=()=>{ overlay.width=video.videoWidth; overlay.height=video.videoHeight; showFirstFrame=true; video.currentTime=0.05; };
+}
+let showFirstFrame=false;
+video.addEventListener('seeked',()=>{ if(showFirstFrame){ octx.drawImage(video,0,0,overlay.width,overlay.height); showFirstFrame=false; } });
+
+/* record */
+let mediaRecorder,recChunks=[],recStream=null,recording=false;
+$('recordBtn').onclick=async()=>{
+  if(!recording){
+    try{
+      recStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment',width:{ideal:1280}},audio:false});
+      video.srcObject=recStream; video.src=''; video.muted=true; video.play();
+      $('videoContainer').style.display='block'; recChunks=[];
+      const mime=MediaRecorder.isTypeSupported('video/mp4')?'video/mp4':'video/webm';
+      mediaRecorder=new MediaRecorder(recStream,{mimeType:mime});
+      mediaRecorder.ondataavailable=e=>{if(e.data.size)recChunks.push(e.data);};
+      mediaRecorder.onstop=()=>{recordedBlob=new Blob(recChunks,{type:mime});recStream.getTracks().forEach(t=>t.stop());loadVideo(URL.createObjectURL(recordedBlob));};
+      mediaRecorder.start(); recording=true; $('recordBtn').textContent='⏹ Stop recording';
+      setStatus('● Recording… take your shot, then stop.');
+    }catch(err){ setStatus('⚠ Camera blocked: '+err.message,'error'); }
+  } else { mediaRecorder.stop(); recording=false; $('recordBtn').textContent='🔴 Record in app'; }
+};
+
+$('sens').oninput=e=>{const v=+e.target.value;$('sensVal').textContent=v<70?'high':v<120?'medium':'low';};
+$('bright').oninput=e=>$('brightVal').textContent=e.target.value;
+$('debugBtn').onclick=()=>{debug=!debug;$('debugBtn').textContent=debug?'hide live tracking':'show live tracking';};
+
+/* ===== HYBRID ANALYZE: COCO-SSD detection + momentum follow ===== */
+$('analyzeBtn').onclick=analyze;
+async function analyze(){
+  if(!video.videoWidth){ setStatus('⚠ Video not ready.','error'); return; }
+  const sens=+$('sens').value, minBright=+$('bright').value;
+  const learned=getLearned();
+
+  setStatus('<span class="loading"></span> Loading AI model…');
+  let model=null;
+  try{ model=await loadModel(); }catch(e){ model=null; }
+
+  setStatus('<span class="loading"></span> Tracking ball (hybrid AI)…');
+
+  const scale=480/video.videoWidth;
+  const pw=Math.round(video.videoWidth*scale), ph=Math.round(video.videoHeight*scale);
+  proc.width=pw; proc.height=ph;
+  overlay.width=video.videoWidth; overlay.height=video.videoHeight;
+
+  trajectoryPoints=[]; prevFrame=null;
+  let lastX = ballSeed ? ballSeed.x*scale : null;
+  let lastY = ballSeed ? ballSeed.y*scale : null;
+  let velX=0, velY=0, launched=false, missCount=0, searchR=55;
+  if(ballSeed && ballSeed.dirX!==undefined){ velX=ballSeed.dirX*30; velY=ballSeed.dirY*30; launched=true; }
+  const step=1/30;
+  video.pause(); video.muted=true;
+
+  // helper: ask COCO-SSD where the sports ball is (full-res frame)
+  const detCanvas=document.createElement('canvas');
+  detCanvas.width=video.videoWidth; detCanvas.height=video.videoHeight;
+  const dctx=detCanvas.getContext('2d');
+  async function detectBall(){
+    if(!model) return null;
+    dctx.drawImage(video,0,0,detCanvas.width,detCanvas.height);
+    let preds=[];
+    try{ preds=await model.detect(detCanvas); }catch(e){ return null; }
+    // accept sports ball, or small roundish objects
+    const balls=preds.filter(p=>p.class==='sports ball');
+    if(!balls.length) return null;
+    // pick the one closest to our prediction (if we have one)
+    let pick=balls[0];
+    if(lastX!==null){
+      let bd=1e9;
+      balls.forEach(b=>{ const cx=(b.bbox[0]+b.bbox[2]/2)*scale, cy=(b.bbox[1]+b.bbox[3]/2)*scale; const dd=Math.hypot(cx-lastX,cy-lastY); if(dd<bd){bd=dd;pick=b;} });
+    }
+    return { x:(pick.bbox[0]+pick.bbox[2]/2)*scale, y:(pick.bbox[1]+pick.bbox[3]/2)*scale, conf:pick.score };
+  }
+
+  let frameNo=0;
+  const onSeek=async()=>{
+    pctx.drawImage(video,0,0,pw,ph);
+    const f=pctx.getImageData(0,0,pw,ph);
+
+    // 1) Try AI detection every 3rd frame (it's slower) or when we have no position yet
+    let aiHit=null;
+    if(model && (lastX===null || frameNo%3===0)){
+      aiHit=await detectBall();
+    }
+
+    if(prevFrame || aiHit){
+      let bx=null,by=null;
+
+      if(aiHit){
+        bx=aiHit.x; by=aiHit.y;  // trust the AI when it sees the ball
+      } else if(prevFrame && lastX!==null){
+        // 2) momentum + pixel-motion fallback between AI hits
+        const d=f.data,p=prevFrame.data; let best=-1;
+        const predX=lastX+velX, predY=lastY+velY;
+        const cx=launched?predX:lastX, cy=launched?predY:lastY;
+        const x0=Math.max(0,(cx-searchR)|0),x1=Math.min(pw,(cx+searchR)|0);
+        const y0=Math.max(0,(cy-searchR)|0),y1=Math.min(ph,(cy+searchR)|0);
+        for(let y=y0;y<y1;y++)for(let x=x0;x<x1;x++){
+          const i=(y*pw+x)*4;
+          const diff=Math.abs(d[i]-p[i])+Math.abs(d[i+1]-p[i+1])+Math.abs(d[i+2]-p[i+2]);
+          const bright=d[i]+d[i+1]+d[i+2];
+          if(diff>sens && bright>minBright){
+            const dist=Math.hypot(x-cx,y-cy);
+            const prox=1+(searchR-dist)/searchR;
+            let dirBonus=1;
+            if(launched&&(velX||velY)){
+              const mvx=x-lastX,mvy=y-lastY,mvL=Math.hypot(mvx,mvy)||1,vL=Math.hypot(velX,velY)||1;
+              const dot=(mvx*velX+mvy*velY)/(mvL*vL);
+              dirBonus=(1+Math.max(0,dot)*2)*(1+Math.min(mvL/searchR,1));
+            }
+            // colour match to the LEARNED ball appearance (if trained)
+            let colBonus=1;
+            if(learned){
+              const cd=Math.abs(d[i]-learned.r)+Math.abs(d[i+1]-learned.g)+Math.abs(d[i+2]-learned.b);
+              colBonus=1+Math.max(0,(180-cd)/180); // close colour → up to 2x
+            }
+            const score=(diff*0.6+bright*0.2)*prox*dirBonus*colBonus;
+            if(score>best){best=score;bx=x;by=y;}
+          }
+        }
+      }
+
+      if(bx!==null){
+        if(lastX!==null){
+          const nvx=bx-lastX, nvy=by-lastY, moved=Math.hypot(nvx,nvy);
+          if(!launched&&moved>6) launched=true;
+          if(launched){ velX=velX*0.4+nvx*0.6; velY=velY*0.4+nvy*0.6; }
+        }
+        trajectoryPoints.push({x:bx/scale,y:by/scale,t:video.currentTime});
+        lastX=bx; lastY=by; missCount=0;
+        searchR=launched?Math.max(45,Math.min(120,Math.hypot(velX,velY)*1.8)):55;
+      } else if(lastX!==null){
+        missCount++;
+        if(launched){ lastX+=velX; lastY+=velY; }
+        searchR=Math.min(180,searchR+30);
+        if(missCount>12){ video.removeEventListener('seeked',onSeek); finish(); return; }
+      }
+
+      if(debug){ octx.drawImage(video,0,0,overlay.width,overlay.height); drawPath(false);
+        if(lastX!==null){ octx.strokeStyle=aiHit?'rgba(0,255,120,.9)':(launched?'rgba(0,255,255,.7)':'rgba(255,200,0,.7)'); octx.lineWidth=2;
+          octx.strokeRect((lastX-searchR)/scale,(lastY-searchR)/scale,searchR*2/scale,searchR*2/scale); } }
+    }
+    prevFrame=f; frameNo++;
+    if(video.currentTime+step<video.duration){ video.currentTime+=step; }
+    else { video.removeEventListener('seeked',onSeek); finish(); }
+  };
+  video.addEventListener('seeked',onSeek);
+  video.currentTime=step;
+}
+
+function finish(){
+  trajectoryPoints=clean(trajectoryPoints);
+  octx.drawImage(video,0,0,overlay.width,overlay.height);
+  if(trajectoryPoints.length<2){ setStatus('⚠ Couldn’t track the ball. Try the Train tab to teach it your ball, mark the ball + drag direction, or raise sensitivity.','error'); return; }
+  drawPath(true); stats(); $('exportBtn').disabled=false;
+  const tip=getLearned()?' (using your trained ball profile)':'';
+  setStatus('✓ Tracked '+trajectoryPoints.length+' points!'+tip+' Press “Export video” to save.','success');
+}
+function clean(pts){ if(pts.length<3)return pts; const o=[pts[0]]; for(let i=1;i<pts.length;i++){ if(Math.hypot(pts[i].x-o[o.length-1].x,pts[i].y-o[o.length-1].y)<300)o.push(pts[i]); } return o; }
+function drawPath(m){
+  if(trajectoryPoints.length<2)return;
+  octx.strokeStyle='#ff2d2d'; octx.lineWidth=Math.max(5,overlay.width/180); octx.lineCap='round'; octx.lineJoin='round';
+  octx.shadowColor='rgba(255,45,45,.8)'; octx.shadowBlur=18;
+  octx.beginPath(); octx.moveTo(trajectoryPoints[0].x,trajectoryPoints[0].y);
+  for(let i=1;i<trajectoryPoints.length-1;i++){ const xc=(trajectoryPoints[i].x+trajectoryPoints[i+1].x)/2,yc=(trajectoryPoints[i].y+trajectoryPoints[i+1].y)/2; octx.quadraticCurveTo(trajectoryPoints[i].x,trajectoryPoints[i].y,xc,yc); }
+  const last=trajectoryPoints[trajectoryPoints.length-1]; octx.lineTo(last.x,last.y); octx.stroke(); octx.shadowBlur=0;
+  if(m){ const r=Math.max(7,overlay.width/110); octx.fillStyle='#00ff66'; octx.beginPath(); octx.arc(trajectoryPoints[0].x,trajectoryPoints[0].y,r,0,7); octx.fill(); octx.fillStyle='#ff2d2d'; octx.beginPath(); octx.arc(last.x,last.y,r,0,7); octx.fill(); }
+}
+function stats(){
+  const s=trajectoryPoints[0],e=trajectoryPoints[trajectoryPoints.length-1];
+  const dist=Math.hypot(e.x-s.x,e.y-s.y); let peak=Infinity; trajectoryPoints.forEach(p=>peak=Math.min(peak,p.y));
+  $('distance').textContent=(dist/8).toFixed(0)+'m';
+  $('angle').textContent=Math.abs(Math.atan2(-(e.y-s.y),Math.abs(e.x-s.x))*180/Math.PI).toFixed(0)+'°';
+  $('height').textContent=((s.y-peak)/8).toFixed(0)+'m';
+  $('time').textContent=(e.t-s.t).toFixed(2)+'s'; $('stats').style.display='grid';
+}
+
+/* export video with revealed line */
+$('exportBtn').onclick=exportVideo;
+async function exportVideo(){
+  if(trajectoryPoints.length<2)return;
+  setStatus('<span class="loading"></span> Rendering export…');
+  const out=document.createElement('canvas'); out.width=video.videoWidth; out.height=video.videoHeight;
+  const c=out.getContext('2d'); const stream=out.captureStream(30);
+  const mime=MediaRecorder.isTypeSupported('video/mp4')?'video/mp4':'video/webm';
+  const rec=new MediaRecorder(stream,{mimeType:mime,videoBitsPerSecond:8000000}); const chunks=[];
+  rec.ondataavailable=e=>{if(e.data.size)chunks.push(e.data);};
+  rec.onstop=()=>{const blob=new Blob(chunks,{type:mime});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='golftrack.'+(mime.includes('mp4')?'mp4':'webm');a.click();setStatus('✓ Exported! Check downloads.','success');};
+  video.pause(); video.currentTime=0; video.muted=true; rec.start();
+  await new Promise(r=>{video.onseeked=r;video.currentTime=0;}); video.play();
+  const render=()=>{
+    c.drawImage(video,0,0,out.width,out.height);
+    const vis=trajectoryPoints.filter(p=>p.t<=video.currentTime);
+    if(vis.length>1){ c.strokeStyle='#ff2d2d';c.lineWidth=Math.max(5,out.width/180);c.lineCap='round';c.lineJoin='round';c.shadowColor='rgba(255,45,45,.8)';c.shadowBlur=18;c.beginPath();c.moveTo(vis[0].x,vis[0].y);for(let i=1;i<vis.length;i++)c.lineTo(vis[i].x,vis[i].y);c.stroke();c.shadowBlur=0; }
+    if(!video.paused&&!video.ended)requestAnimationFrame(render); else setTimeout(()=>rec.stop(),300);
+  };
+  render();
+}
+$('resetBtn').onclick=()=>{ video.pause();video.src='';video.srcObject=null;$('videoContainer').style.display='none';$('controls').style.display='none';$('sensRow').style.display='none';$('stats').style.display='none';$('status').innerHTML='';trajectoryPoints=[];prevFrame=null;ballSeed=null;$('videoInput').value=''; };
+function setStatus(h,c){ $('status').innerHTML='<div class="status '+(c||'')+'">'+h+'</div>'; }
+
+/* ===================================================================
+   ============ TRAIN PANEL ============
+   =================================================================== */
+const tCanvas=$('trainCanvas'), tctx=tCanvas.getContext('2d',{willReadFrequently:true});
+const tOverlay=$('trainOverlay'), toctx=tOverlay.getContext('2d');
+let trainQueue=[];      // list of {type:'image'|'video', src} to label
+let trainIdx=0;
+let trainVideo=null;    // hidden video element for frame grabbing
+let curBox=null;        // {x,y,w,h} in canvas pixels
+let tDrag=null;
+
+$('trainUploadBox').onclick=()=>$('trainInput').click();
+$('trainInput').onchange=async e=>{
+  const files=[...e.target.files]; if(!files.length)return;
+  trainQueue=[]; trainIdx=0;
+  for(const f of files){
+    if(f.type.startsWith('image/')) trainQueue.push({type:'image',src:URL.createObjectURL(f)});
+    else if(f.type.startsWith('video/')) trainQueue.push({type:'video',src:URL.createObjectURL(f)});
+  }
+  $('trainContainer').style.display='block'; $('trainControls').style.display='flex';
+  await showTrainItem();
+};
+
+async function showTrainItem(){
+  curBox=null;
+  if(trainIdx>=trainQueue.length){ setTrainStatus('✓ All items labeled. Add more, or export your dataset.','success'); $('trainControls').style.display='none'; return; }
+  const item=trainQueue[trainIdx];
+  if(item.type==='image'){
+    const img=new Image(); img.onload=()=>{ drawTrainFrame(img,img.naturalWidth,img.naturalHeight); }; img.src=item.src;
+    $('nextFrameBtn').style.display='none';
+  } else {
+    if(!trainVideo){ trainVideo=document.createElement('video'); trainVideo.muted=true; trainVideo.playsInline=true; }
+    trainVideo.src=item.src;
+    $('nextFrameBtn').style.display='';
+    await new Promise(r=>{ trainVideo.onloadeddata=r; });
+    trainVideo.currentTime=0.1;
+    await new Promise(r=>{ trainVideo.onseeked=r; });
+    drawTrainFrame(trainVideo,trainVideo.videoWidth,trainVideo.videoHeight);
+  }
+  setTrainStatus('Drag a box tightly around the ball, then “Save this sample”. ('+(trainIdx+1)+'/'+trainQueue.length+')');
+}
+function drawTrainFrame(srcEl,w,h){
+  tCanvas.width=w; tCanvas.height=h; tOverlay.width=w; tOverlay.height=h;
+  tctx.drawImage(srcEl,0,0,w,h); toctx.clearRect(0,0,w,h);
+}
+function tToCanvas(cx,cy){ const r=tOverlay.getBoundingClientRect(); return {x:(cx-r.left)/r.width*tOverlay.width, y:(cy-r.top)/r.height*tOverlay.height}; }
+function tStart(cx,cy){ tDrag=tToCanvas(cx,cy); curBox={x:tDrag.x,y:tDrag.y,w:0,h:0}; }
+function tMove(cx,cy){ if(!tDrag)return; const p=tToCanvas(cx,cy); curBox={x:Math.min(tDrag.x,p.x),y:Math.min(tDrag.y,p.y),w:Math.abs(p.x-tDrag.x),h:Math.abs(p.y-tDrag.y)}; drawBox(); }
+function tEnd(){ tDrag=null; }
+function drawBox(){
+  toctx.clearRect(0,0,tOverlay.width,tOverlay.height);
+  if(!curBox)return;
+  toctx.strokeStyle='#00ff66'; toctx.lineWidth=Math.max(2,tOverlay.width/300);
+  toctx.strokeRect(curBox.x,curBox.y,curBox.w,curBox.h);
+}
+tOverlay.addEventListener('mousedown',e=>tStart(e.clientX,e.clientY));
+tOverlay.addEventListener('mousemove',e=>{if(tDrag)tMove(e.clientX,e.clientY);});
+tOverlay.addEventListener('mouseup',tEnd);
+tOverlay.addEventListener('touchstart',e=>{e.preventDefault();const t=e.touches[0];if(t)tStart(t.clientX,t.clientY);},{passive:false});
+tOverlay.addEventListener('touchmove',e=>{e.preventDefault();const t=e.touches[0];if(t)tMove(t.clientX,t.clientY);},{passive:false});
+tOverlay.addEventListener('touchend',e=>{e.preventDefault();tEnd();},{passive:false});
+
+$('saveSampleBtn').onclick=()=>{
+  if(!curBox||curBox.w<4||curBox.h<4){ setTrainStatus('⚠ Draw a box around the ball first.','warn'); return; }
+  // sample average colour inside the box
+  const data=tctx.getImageData(curBox.x,curBox.y,Math.max(1,curBox.w),Math.max(1,curBox.h)).data;
+  let r=0,g=0,b=0,n=0;
+  for(let i=0;i<data.length;i+=4){ r+=data[i];g+=data[i+1];b+=data[i+2];n++; }
+  r/=n; g/=n; b/=n;
+  // thumbnail
+  const th=document.createElement('canvas'); th.width=64; th.height=64;
+  th.getContext('2d').drawImage(tCanvas,curBox.x,curBox.y,curBox.w,curBox.h,0,0,64,64);
+  const sample={ r,g,b, size:(curBox.w+curBox.h)/2, thumb:th.toDataURL('image/jpeg',0.6),
+    // YOLO label (normalized cx,cy,w,h) + the full frame for export
+    box:{cx:(curBox.x+curBox.w/2)/tCanvas.width, cy:(curBox.y+curBox.h/2)/tCanvas.height, w:curBox.w/tCanvas.width, h:curBox.h/tCanvas.height},
+    frame:tCanvas.toDataURL('image/jpeg',0.7) };
+  const samples=getSamples(); samples.push(sample); setSamples(samples);
+  refreshThumbs();
+  setTrainStatus('✓ Sample saved! The tracker just got smarter about your ball.','success');
+  curBox=null; toctx.clearRect(0,0,tOverlay.width,tOverlay.height);
+  // auto-advance for images
+  if(trainQueue[trainIdx] && trainQueue[trainIdx].type==='image'){ trainIdx++; showTrainItem(); }
+};
+$('nextFrameBtn').onclick=async()=>{
+  const item=trainQueue[trainIdx];
+  if(item && item.type==='video' && trainVideo){
+    trainVideo.currentTime=Math.min(trainVideo.duration-0.05,(trainVideo.currentTime||0)+0.2);
+    await new Promise(r=>{trainVideo.onseeked=r;});
+    drawTrainFrame(trainVideo,trainVideo.videoWidth,trainVideo.videoHeight);
+    curBox=null;
+  }
+};
+$('skipBtn').onclick=()=>{ trainIdx++; showTrainItem(); };
+$('clearDataBtn').onclick=()=>{ if(confirm('Delete all saved training samples?')){ localStorage.removeItem('golf_samples'); localStorage.removeItem('golf_ball_profile'); refreshThumbs(); setTrainStatus('Samples cleared.','warn'); } };
+
+$('exportDataBtn').onclick=()=>{
+  const samples=getSamples();
+  if(!samples.length){ setTrainStatus('⚠ No samples to export yet.','warn'); return; }
+  // Build a YOLO-style export: a JSON manifest + instructions.
+  // (Images are data-URLs; we package everything in one JSON the user can convert.)
+  const manifest={ classes:['golf_ball'], count:samples.length,
+    note:'Each item: image (base64 jpeg) + YOLO label line "0 cx cy w h" (normalized).',
+    items: samples.map((s,i)=>({ file:'img_'+i+'.jpg', image:s.frame, label:'0 '+s.box.cx.toFixed(6)+' '+s.box.cy.toFixed(6)+' '+s.box.w.toFixed(6)+' '+s.box.h.toFixed(6) })) };
+  const blob=new Blob([JSON.stringify(manifest,null,2)],{type:'application/json'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='golf_dataset.json'; a.click();
+  setTrainStatus('✓ Exported '+samples.length+' samples as golf_dataset.json. Use it to train a YOLO model (see notes).','success');
+};
+
+function refreshThumbs(){
+  const samples=getSamples();
+  $('sampleCount').textContent=samples.length;
+  const wrap=$('thumbs'); wrap.innerHTML='';
+  samples.forEach((s,i)=>{
+    const d=document.createElement('div'); d.className='thumb';
+    d.innerHTML='<img src="'+s.thumb+'"><button class="del" data-i="'+i+'">×</button>';
+    wrap.appendChild(d);
+  });
+  wrap.querySelectorAll('.del').forEach(b=>b.onclick=()=>{ const arr=getSamples(); arr.splice(+b.dataset.i,1); setSamples(arr); refreshThumbs(); });
+}
+function setTrainStatus(h,c){ $('trainStatus').innerHTML='<div class="status '+(c||'')+'">'+h+'</div>'; }
+refreshThumbs();
+</script>
+</body>
+</html>
