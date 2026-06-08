@@ -109,27 +109,36 @@
   <div class="panel" id="trainPanel">
     <div class="train-info">
       <b>Teach the app what YOUR golf ball looks like.</b><br>
-      1. Upload images or a video.<br>
-      2. <b>Drag a box around the ball</b> in each frame.<br>
-      3. Saved samples make tracking smarter, and can be exported to train a real YOLO model later.
-      <br><br>Saved samples: <span class="sample-count" id="sampleCount">0</span>
+      1. Upload as many images / videos as you want (select multiple).<br>
+      2. <b>Drag a box around the ball</b>, then Save — it auto-jumps to the next frame.<br>
+      3. Saved samples improve tracking and export to train a real YOLO model.
+      <br><br>⌨️ Shortcuts: <b>Space</b> = save &amp; next · <b>→</b> = skip frame · <b>←</b> = back
+      <br>Saved samples: <span class="sample-count" id="sampleCount">0</span>
     </div>
 
     <div class="upload-box" id="trainUploadBox">
-      <div class="upload-text">🖼️ Add training images / video</div>
-      <div class="upload-hint">Select one or more images, or a video to grab frames from</div>
+      <div class="upload-text">🖼️ Add training images / videos</div>
+      <div class="upload-hint">Select as many files as you like at once</div>
       <input type="file" id="trainInput" accept="image/*,video/*" multiple>
     </div>
+
+    <div id="trainProgress" style="display:none;font-size:13px;color:#9cf;margin:4px 2px 0;font-weight:600"></div>
 
     <div id="trainContainer" class="video-container" style="display:none">
       <canvas id="trainCanvas"></canvas>
       <canvas id="trainOverlay"></canvas>
     </div>
 
+    <div class="slider-row" id="frameStepRow" style="display:none">
+      <label>Frame jump size <span id="stepVal">0.20s</span></label>
+      <input type="range" id="frameStep" min="3" max="50" value="20">
+    </div>
+
     <div class="controls" id="trainControls" style="display:none">
-      <button class="btn-primary" id="saveSampleBtn">✓ Save this sample</button>
-      <button class="btn-secondary" id="nextFrameBtn">⏭ Next frame</button>
-      <button class="btn-secondary" id="skipBtn">Skip</button>
+      <button class="btn-primary" id="saveSampleBtn">✓ Save &amp; next (Space)</button>
+      <button class="btn-secondary" id="prevFrameBtn">⏮ Back</button>
+      <button class="btn-secondary" id="nextFrameBtn">⏭ Skip frame</button>
+      <button class="btn-secondary" id="nextFileBtn">Next file ⏩</button>
     </div>
 
     <div class="controls">
@@ -166,20 +175,73 @@ function loadModel(){
 
 /* ============ LEARNED BALL APPEARANCE (from training samples) ============ */
 // stored in localStorage: average colour + size of the ball the user has marked
-function getLearned(){
-  try{ return JSON.parse(localStorage.getItem('golf_ball_profile')||'null'); }catch(e){ return null; }
+/* ---- storage: IndexedDB (big capacity) with in-memory cache ---- */
+let _samples=[];            // in-memory cache
+let _learned=null;
+let _db=null;
+
+function openDB(){
+  return new Promise((resolve)=>{
+    const req=indexedDB.open('golftrack',1);
+    req.onupgradeneeded=()=>{ const db=req.result; if(!db.objectStoreNames.contains('samples')) db.createObjectStore('samples',{keyPath:'id',autoIncrement:true}); };
+    req.onsuccess=()=>resolve(req.result);
+    req.onerror=()=>resolve(null);
+  });
 }
-function getSamples(){
-  try{ return JSON.parse(localStorage.getItem('golf_samples')||'[]'); }catch(e){ return []; }
+async function initStorage(){
+  _db=await openDB();
+  if(_db){
+    await new Promise(res=>{
+      const tx=_db.transaction('samples','readonly');
+      const all=tx.objectStore('samples').getAll();
+      all.onsuccess=()=>{ _samples=all.result||[]; res(); };
+      all.onerror=()=>res();
+    });
+  } else {
+    // fallback to localStorage if IndexedDB unavailable
+    try{ _samples=JSON.parse(localStorage.getItem('golf_samples')||'[]'); }catch(e){ _samples=[]; }
+  }
+  recomputeLearned();
+  refreshThumbs();
 }
-function setSamples(s){ localStorage.setItem('golf_samples',JSON.stringify(s)); updateLearned(s); }
-function updateLearned(samples){
-  if(!samples.length){ localStorage.removeItem('golf_ball_profile'); return; }
-  let r=0,g=0,b=0,sz=0;
-  samples.forEach(s=>{ r+=s.r; g+=s.g; b+=s.b; sz+=s.size; });
-  const n=samples.length;
-  localStorage.setItem('golf_ball_profile',JSON.stringify({r:r/n,g:g/n,b:b/n,size:sz/n,n}));
+function recomputeLearned(){
+  if(!_samples.length){ _learned=null; return; }
+  let r=0,g=0,b=0,sz=0; _samples.forEach(s=>{r+=s.r;g+=s.g;b+=s.b;sz+=s.size;});
+  const n=_samples.length; _learned={r:r/n,g:g/n,b:b/n,size:sz/n,n};
 }
+function getLearned(){ return _learned; }
+function getSamples(){ return _samples; }
+
+async function addSample(sample){
+  if(_db){
+    await new Promise((res,rej)=>{
+      const tx=_db.transaction('samples','readwrite');
+      tx.objectStore('samples').add(sample);
+      tx.oncomplete=res; tx.onerror=()=>rej(tx.error); tx.onabort=()=>rej(tx.error||new Error('abort'));
+    });
+    // refresh cache id by reloading lightweight (count only) — keep local copy too
+    _samples.push(sample);
+  } else {
+    _samples.push(sample);
+    localStorage.setItem('golf_samples',JSON.stringify(_samples)); // may throw if full
+  }
+  recomputeLearned();
+}
+async function deleteSampleAt(i){
+  const s=_samples[i]; if(!s) return;
+  if(_db && s.id!==undefined){
+    await new Promise(res=>{ const tx=_db.transaction('samples','readwrite'); tx.objectStore('samples').delete(s.id); tx.oncomplete=res; tx.onerror=res; });
+  }
+  _samples.splice(i,1);
+  if(!_db){ try{ localStorage.setItem('golf_samples',JSON.stringify(_samples)); }catch(e){} }
+  recomputeLearned();
+}
+async function clearSamples(){
+  if(_db){ await new Promise(res=>{ const tx=_db.transaction('samples','readwrite'); tx.objectStore('samples').clear(); tx.oncomplete=res; tx.onerror=res; }); }
+  _samples=[]; _learned=null;
+  try{ localStorage.removeItem('golf_samples'); localStorage.removeItem('golf_ball_profile'); }catch(e){}
+}
+
 
 /* ===================================================================
    ============ TRACK PANEL ============
@@ -425,49 +487,61 @@ function setStatus(h,c){ $('status').innerHTML='<div class="status '+(c||'')+'">
    =================================================================== */
 const tCanvas=$('trainCanvas'), tctx=tCanvas.getContext('2d',{willReadFrequently:true});
 const tOverlay=$('trainOverlay'), toctx=tOverlay.getContext('2d');
-let trainQueue=[];      // list of {type:'image'|'video', src} to label
+let trainQueue=[];      // list of {type, src, name}
 let trainIdx=0;
-let trainVideo=null;    // hidden video element for frame grabbing
-let curBox=null;        // {x,y,w,h} in canvas pixels
-let tDrag=null;
+let trainVideo=null;
+let curBox=null, tDrag=null;
+let frameStep=0.20;     // seconds to jump per frame on video
+
+$('frameStep').oninput=e=>{ frameStep=(+e.target.value)/100; $('stepVal').textContent=frameStep.toFixed(2)+'s'; };
 
 $('trainUploadBox').onclick=()=>$('trainInput').click();
 $('trainInput').onchange=async e=>{
   const files=[...e.target.files]; if(!files.length)return;
-  // clear any previous frame/box so items don't stack
-  trainQueue=[]; trainIdx=0; curBox=null; tDrag=null;
-  toctx&&toctx.clearRect(0,0,tOverlay.width,tOverlay.height);
+  // ADD to the queue instead of replacing — lets you keep loading more
   for(const f of files){
-    if(f.type.startsWith('image/')) trainQueue.push({type:'image',src:URL.createObjectURL(f)});
-    else if(f.type.startsWith('video/')) trainQueue.push({type:'video',src:URL.createObjectURL(f)});
+    if(f.type.startsWith('image/')) trainQueue.push({type:'image',src:URL.createObjectURL(f),name:f.name});
+    else if(f.type.startsWith('video/')) trainQueue.push({type:'video',src:URL.createObjectURL(f),name:f.name});
   }
+  $('trainInput').value=''; // allow re-selecting same files later
   $('trainContainer').style.display='block'; $('trainControls').style.display='flex';
+  if(trainIdx>=trainQueue.length-files.length){ trainIdx=Math.max(0,trainQueue.length-files.length); }
   await showTrainItem();
 };
 
+function updateProgress(){
+  const item=trainQueue[trainIdx];
+  let txt='File '+(trainIdx+1)+'/'+trainQueue.length;
+  if(item){ txt+=' · '+(item.name||item.type); if(item.type==='video'&&trainVideo&&trainVideo.duration){ txt+=' · '+ (trainVideo.currentTime||0).toFixed(1)+'s / '+trainVideo.duration.toFixed(1)+'s'; } }
+  $('trainProgress').textContent=txt;
+  $('trainProgress').style.display='block';
+}
+
 async function showTrainItem(){
   curBox=null;
-  if(trainIdx>=trainQueue.length){ setTrainStatus('✓ All items labeled. Add more, or export your dataset.','success'); $('trainControls').style.display='none'; return; }
+  if(trainIdx>=trainQueue.length){ setTrainStatus('✓ All files done ('+getSamples().length+' samples saved). Add more files or export.','success'); $('trainControls').style.display='none'; $('frameStepRow').style.display='none'; return; }
   const item=trainQueue[trainIdx];
   if(item.type==='image'){
-    const img=new Image(); img.onload=()=>{ drawTrainFrame(img,img.naturalWidth,img.naturalHeight); }; img.src=item.src;
-    $('nextFrameBtn').style.display='none';
+    $('frameStepRow').style.display='none';
+    $('prevFrameBtn').style.display='none'; $('nextFrameBtn').style.display='none';
+    const img=new Image();
+    await new Promise(res=>{ img.onload=res; img.src=item.src; });
+    drawTrainFrame(img,img.naturalWidth,img.naturalHeight);
   } else {
+    $('frameStepRow').style.display='block';
+    $('prevFrameBtn').style.display=''; $('nextFrameBtn').style.display='';
     if(!trainVideo){ trainVideo=document.createElement('video'); trainVideo.muted=true; trainVideo.playsInline=true; }
-    trainVideo.src=item.src;
-    $('nextFrameBtn').style.display='';
-    await new Promise(r=>{ trainVideo.onloadeddata=r; });
-    trainVideo.currentTime=0.1;
-    await new Promise(r=>{ trainVideo.onseeked=r; });
+    if(trainVideo.src!==item.src){ trainVideo.src=item.src; await new Promise(r=>{ trainVideo.onloadeddata=r; }); trainVideo.currentTime=0.1; await new Promise(r=>{ trainVideo.onseeked=r; }); }
     drawTrainFrame(trainVideo,trainVideo.videoWidth,trainVideo.videoHeight);
   }
-  setTrainStatus('Drag a box tightly around the ball, then “Save this sample”. ('+(trainIdx+1)+'/'+trainQueue.length+')');
+  updateProgress();
+  setTrainStatus('Drag a box around the ball → Save (or press Space).');
 }
+
 function drawTrainFrame(srcEl,w,h){
   tCanvas.width=w; tCanvas.height=h; tOverlay.width=w; tOverlay.height=h;
   tctx.clearRect(0,0,w,h); tctx.drawImage(srcEl,0,0,w,h);
-  toctx.clearRect(0,0,w,h);
-  curBox=null;
+  toctx.clearRect(0,0,w,h); curBox=null;
 }
 function tToCanvas(cx,cy){ const r=tOverlay.getBoundingClientRect(); return {x:(cx-r.left)/r.width*tOverlay.width, y:(cy-r.top)/r.height*tOverlay.height}; }
 function tStart(cx,cy){ tDrag=tToCanvas(cx,cy); curBox={x:tDrag.x,y:tDrag.y,w:0,h:0}; }
@@ -486,38 +560,71 @@ tOverlay.addEventListener('touchstart',e=>{e.preventDefault();const t=e.touches[
 tOverlay.addEventListener('touchmove',e=>{e.preventDefault();const t=e.touches[0];if(t)tMove(t.clientX,t.clientY);},{passive:false});
 tOverlay.addEventListener('touchend',e=>{e.preventDefault();tEnd();},{passive:false});
 
-$('saveSampleBtn').onclick=()=>{
-  if(!curBox||curBox.w<4||curBox.h<4){ setTrainStatus('⚠ Draw a box around the ball first.','warn'); return; }
-  // sample average colour inside the box
-  const data=tctx.getImageData(curBox.x,curBox.y,Math.max(1,curBox.w),Math.max(1,curBox.h)).data;
+// jump within current video (or move between files for images)
+async function stepFrame(dir){
+  const item=trainQueue[trainIdx];
+  if(item && item.type==='video' && trainVideo){
+    let t=(trainVideo.currentTime||0)+dir*frameStep;
+    if(t>=trainVideo.duration-0.02){ // past end → next file
+      trainIdx++; await showTrainItem(); return;
+    }
+    if(t<0) t=0;
+    trainVideo.currentTime=t;
+    await new Promise(r=>{trainVideo.onseeked=r;});
+    drawTrainFrame(trainVideo,trainVideo.videoWidth,trainVideo.videoHeight);
+    updateProgress();
+  } else {
+    // images: step between files
+    trainIdx=Math.min(trainQueue.length, Math.max(0, trainIdx+dir));
+    await showTrainItem();
+  }
+}
+$('nextFrameBtn').onclick=()=>stepFrame(1);
+$('prevFrameBtn').onclick=()=>stepFrame(-1);
+$('nextFileBtn').onclick=async()=>{ trainIdx++; if(trainVideo)trainVideo.removeAttribute('src'); await showTrainItem(); };
+
+async function saveSample(){
+  if(!curBox||curBox.w<4||curBox.h<4){ setTrainStatus('⚠ Draw a box around the ball first.','warn'); return false; }
+  const bx=Math.max(0,curBox.x|0), by=Math.max(0,curBox.y|0);
+  const bw=Math.max(1,curBox.w|0), bh=Math.max(1,curBox.h|0);
+  const data=tctx.getImageData(bx,by,bw,bh).data;
   let r=0,g=0,b=0,n=0;
   for(let i=0;i<data.length;i+=4){ r+=data[i];g+=data[i+1];b+=data[i+2];n++; }
   r/=n; g/=n; b/=n;
-  // thumbnail
-  const th=document.createElement('canvas'); th.width=64; th.height=64;
-  th.getContext('2d').drawImage(tCanvas,curBox.x,curBox.y,curBox.w,curBox.h,0,0,64,64);
-  const sample={ r,g,b, size:(curBox.w+curBox.h)/2, thumb:th.toDataURL('image/jpeg',0.6),
-    // YOLO label (normalized cx,cy,w,h) + the full frame for export
-    box:{cx:(curBox.x+curBox.w/2)/tCanvas.width, cy:(curBox.y+curBox.h/2)/tCanvas.height, w:curBox.w/tCanvas.width, h:curBox.h/tCanvas.height},
-    frame:tCanvas.toDataURL('image/jpeg',0.7) };
-  const samples=getSamples(); samples.push(sample); setSamples(samples);
+  const th=document.createElement('canvas'); th.width=48; th.height=48;
+  th.getContext('2d').drawImage(tCanvas,bx,by,bw,bh,0,0,48,48);
+  const maxW=960, sc=Math.min(1,maxW/tCanvas.width);
+  const fc=document.createElement('canvas'); fc.width=Math.round(tCanvas.width*sc); fc.height=Math.round(tCanvas.height*sc);
+  fc.getContext('2d').drawImage(tCanvas,0,0,fc.width,fc.height);
+  const sample={ r,g,b, size:(bw+bh)/2, thumb:th.toDataURL('image/jpeg',0.5),
+    box:{cx:(bx+bw/2)/tCanvas.width, cy:(by+bh/2)/tCanvas.height, w:bw/tCanvas.width, h:bh/tCanvas.height},
+    frame:fc.toDataURL('image/jpeg',0.7) };
+  try{
+    await addSample(sample);
+  }catch(err){
+    setTrainStatus('⚠ Storage full ('+getSamples().length+' samples). Export your dataset, then Clear samples to continue.','error');
+    return false;
+  }
   refreshThumbs();
-  setTrainStatus('✓ Sample saved! The tracker just got smarter about your ball.','success');
   curBox=null; toctx.clearRect(0,0,tOverlay.width,tOverlay.height);
-  // auto-advance for images
-  if(trainQueue[trainIdx] && trainQueue[trainIdx].type==='image'){ trainIdx++; showTrainItem(); }
-};
-$('nextFrameBtn').onclick=async()=>{
-  const item=trainQueue[trainIdx];
-  if(item && item.type==='video' && trainVideo){
-    trainVideo.currentTime=Math.min(trainVideo.duration-0.05,(trainVideo.currentTime||0)+0.2);
-    await new Promise(r=>{trainVideo.onseeked=r;});
-    drawTrainFrame(trainVideo,trainVideo.videoWidth,trainVideo.videoHeight);
-    curBox=null;
+  return true;
+}
+
+$('saveSampleBtn').onclick=async()=>{
+  if(await saveSample()){
+    setTrainStatus('✓ Saved ('+getSamples().length+' total). Next frame…','success');
+    await stepFrame(1);
   }
 };
-$('skipBtn').onclick=()=>{ trainIdx++; showTrainItem(); };
-$('clearDataBtn').onclick=()=>{ if(confirm('Delete all saved training samples?')){ localStorage.removeItem('golf_samples'); localStorage.removeItem('golf_ball_profile'); refreshThumbs(); setTrainStatus('Samples cleared.','warn'); } };
+$('clearDataBtn').onclick=async()=>{ if(confirm('Delete all saved training samples? (Export first if you want to keep them!)')){ await clearSamples(); refreshThumbs(); setTrainStatus('Samples cleared. Storage freed.','warn'); } };
+
+document.addEventListener('keydown', async e=>{
+  if(!$('trainPanel').classList.contains('active')) return;
+  if($('trainControls').style.display==='none') return;
+  if(e.key===' '){ e.preventDefault(); if(await saveSample()){ setTrainStatus('✓ Saved ('+getSamples().length+' total).','success'); await stepFrame(1); } }
+  else if(e.key==='ArrowRight'){ e.preventDefault(); stepFrame(1); }
+  else if(e.key==='ArrowLeft'){ e.preventDefault(); stepFrame(-1); }
+});
 
 $('exportDataBtn').onclick=()=>{
   const samples=getSamples();
@@ -536,15 +643,21 @@ function refreshThumbs(){
   const samples=getSamples();
   $('sampleCount').textContent=samples.length;
   const wrap=$('thumbs'); wrap.innerHTML='';
-  samples.forEach((s,i)=>{
+  // show only the most recent 40 thumbs to keep the page snappy with big datasets
+  const start=Math.max(0,samples.length-40);
+  if(start>0){ const note=document.createElement('div'); note.className='badge'; note.style.gridColumn='1/-1'; note.textContent='Showing latest 40 of '+samples.length+' samples'; wrap.appendChild(note); }
+  for(let i=start;i<samples.length;i++){
+    const s=samples[i];
     const d=document.createElement('div'); d.className='thumb';
     d.innerHTML='<img src="'+s.thumb+'"><button class="del" data-i="'+i+'">×</button>';
     wrap.appendChild(d);
-  });
-  wrap.querySelectorAll('.del').forEach(b=>b.onclick=()=>{ const arr=getSamples(); arr.splice(+b.dataset.i,1); setSamples(arr); refreshThumbs(); });
+  }
+  wrap.querySelectorAll('.del').forEach(b=>b.onclick=async()=>{ await deleteSampleAt(+b.dataset.i); refreshThumbs(); });
 }
 function setTrainStatus(h,c){ $('trainStatus').innerHTML='<div class="status '+(c||'')+'">'+h+'</div>'; }
-refreshThumbs();
+
+// initialise storage on load (loads existing samples from IndexedDB)
+initStorage();
 </script>
 </body>
 </html>
